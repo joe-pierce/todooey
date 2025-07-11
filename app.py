@@ -237,7 +237,7 @@ with ui.row().classes("m-4"):
     ).bind_enabled_from(selected_row, "id")
     ToggleDetailsButton().props("color=brown")
 
-t = ...
+
 # Add dialog
 with ui.dialog() as add_dialog, ui.card():
     ui.label("Add Task")
@@ -290,5 +290,3 @@ with ui.dialog() as edit_dialog, ui.card():
 update_task_list()
 
 ui.run()
-# if __name__=="__main__":
-# ui.run(native=True, reload=False, window_size=(1300, 900))
