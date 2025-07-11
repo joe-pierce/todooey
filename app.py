@@ -6,14 +6,21 @@ from src.actions import (
     edit_task,
     mark_task_complete,
     mark_task_incomplete,
+    get_unique_categories,
 )
 from src.model import Task, session_scope
+
+# Title
+ui.label("📝 Todooey").classes("text-2xl font-bold")
+selected_row = {"id": None}
+details_column_visible = {"state": True}
+all_categories = {}
 
 
 def update_task_list() -> None:
     new_data = []
     with session_scope() as session:
-        for _i, task in enumerate(session.query(Task).all()):
+        for _i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.priority).all()):
             new_data.append(
                 {
                     "id": task.id,
@@ -26,23 +33,25 @@ def update_task_list() -> None:
             )
         task_table.options["rowData"] = new_data
         task_table.update()
+    update_all_categories()
 
 
 def refresh_task_list() -> None:
     """Refresh the task table with current tasks from the database."""
     new_data = []
     with session_scope() as session:
-        for i, task in enumerate(session.query(Task).all()):
-            new_data.append(
-                {
-                    "id": task.id,
-                    "name": task.name,
-                    "details": task.details,
-                    "category": task.category,
-                    "priority": task.priority,
-                    "is_complete": "✅" if task.is_complete else "⬜",
-                },
-            )
+        for i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.priority).all()):
+            if all_categories.get(task.category, True):
+                new_data.append(
+                    {
+                        "id": task.id,
+                        "name": task.name,
+                        "details": task.details,
+                        "category": task.category,
+                        "priority": task.priority,
+                        "is_complete": "✅" if task.is_complete else "⬜",
+                    },
+                )
         task_table.run_grid_method("setGridOption", "rowData", new_data)
 
     # task_table.run_grid_method("setColumnsVisible", ["details"], details_column_visible["state"])
@@ -55,12 +64,20 @@ def refresh_task_list() -> None:
                 task_table.run_row_method(i, "setSelected", True)
 
                 break
+    update_all_categories()
 
 
-# Title
-ui.label("📝 Task Manager").classes("text-2xl font-bold m-4")
-selected_row = {"id": None}
-details_column_visible = {"state": True}
+def update_all_categories():
+    latest = get_unique_categories()
+    for key in all_categories.copy():
+        if key not in latest:
+            del all_categories[key]
+
+    for cat in latest:
+        if cat not in all_categories:
+            all_categories[cat] = True
+
+    refresh_category_buttons()
 
 
 def handle_row_select(e) -> None:
@@ -103,49 +120,68 @@ class ToggleDetailsButton(ui.button):
         super().update()
 
 
+class HideCategoryButton(ui.button):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.label = args[0]
+        self.data_visible = all_categories[self.label]
+        self.on("click", self.toggle)
+
+    def toggle(self) -> None:
+        self.data_visible = not self.data_visible
+        all_categories[self.label] = self.data_visible
+        self.update()
+        refresh_task_list()
+
+    def update(self) -> None:
+        self.props(f'color={"green" if self.data_visible else "grey"}')
+        super().update()
+
+
 # Task Table
 
 task_table = (
     ui.aggrid(
         {
             "defaultColDef": {"flex": 1},
+            "enableCellTextSelection": True,
             "columnDefs": [
                 {"headerName": "ID", "field": "id", "width": 50, "hide": True},
                 {
                     "headerName": "Name",
                     "field": "name",
-                    "filter": "agTextColumnFilter",
-                    "floatingFilter": True,
                     "width": 200,
                 },
                 {
                     "headerName": "Details",
                     "field": "details",
-                    "filter": "agTextColumnFilter",
-                    "floatingFilter": True,
                     "width": 300,
+                    "wrapText": True,
+                    "autoHeight": True,
                 },
                 {
                     "headerName": "Category",
                     "field": "category",
-                    "filter": "agTextColumnFilter",
-                    "floatingFilter": True,
                     "width": 150,
                 },
                 {
                     "headerName": "Priority",
                     "field": "priority",
-                    "filter": "agNumberColumnFilter",
-                    "floatingFilter": True,
                     "width": 50,
                     "sortable": True,
                 },
-                {"headerName": "Completed", "field": "is_complete", "width": 50},
+                {
+                    "headerName": "Completed",
+                    "field": "is_complete",
+                    "width": 50,
+                    "cellStyle": {"fontSize": "20px", "textAlign": "center"},
+                },
             ],
             "rowData": [],
             "rowSelection": "single",
         },
     )
+    .style("height: 450px")
     .on("cellDoubleClicked", double_click_toggle_completed)
     .on("cellClicked", handle_row_select)
 )
@@ -177,7 +213,7 @@ task_table = (
 # ''')
 
 # Action buttons
-with ui.row().classes("m-4"):
+with ui.row().classes("gap-2"):
 
     def do_add_task() -> None:
         add_dialog.open()
@@ -239,13 +275,13 @@ with ui.row().classes("m-4"):
 
 
 # Add dialog
-with ui.dialog() as add_dialog, ui.card():
+with ui.dialog() as add_dialog, ui.card().style("width: 700px"):
     ui.label("Add Task")
 
-    add_name = ui.input("Name").props("outlined")
-    add_details = ui.input("Details").props("outlined")
-    add_category = ui.input("Category").props("outlined")
-    add_priority = ui.input("Priority").props("outlined type=number")
+    add_name = ui.input("Name").props("outlined").classes("w-full")
+    add_details = ui.textarea("Details").props("outlined").classes("w-full")
+    add_category = ui.input("Category").props("outlined").classes("w-full")
+    add_priority = ui.input("Priority").props("outlined type=number").classes("w-full")
 
     def handle_add() -> None:
         add_task(
@@ -261,13 +297,13 @@ with ui.dialog() as add_dialog, ui.card():
     ui.button("Add Task", on_click=handle_add).classes("bg-primary text-white")
 
 # Edit Dialog
-with ui.dialog() as edit_dialog, ui.card():
+with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
     ui.label("Edit Task")
 
-    edit_name = ui.input("Name").props("outlined")
-    edit_details = ui.input("Details").props("outlined")
-    edit_category = ui.input("Category").props("outlined")
-    edit_priority = ui.input("Priority").props("outlined type=number")
+    edit_name = ui.input("Name").props("outlined").classes("w-full")
+    edit_details = ui.textarea("Details").props("outlined").classes("w-full")
+    edit_category = ui.input("Category").props("outlined").classes("w-full")
+    edit_priority = ui.input("Priority").props("outlined type=number").classes("w-full")
 
     def submit_edit() -> None:
         if selected_row["id"]:
@@ -286,7 +322,19 @@ with ui.dialog() as edit_dialog, ui.card():
         "mt-2 bg-primary text-white",
     )
 
+
+def refresh_category_buttons():
+    category_row.clear()
+    with category_row:
+        for category in all_categories:
+            HideCategoryButton(category)
+
+
+ui.separator()
+category_row = ui.row().classes("gap-2")
+
 # Initial load of tasks
 update_task_list()
+
 
 ui.run()

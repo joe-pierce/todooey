@@ -50,6 +50,7 @@ class Task(Base):
     category = Column(String)
     priority = Column(Integer)
     is_complete = Column(Boolean)
+    archived = Column(Boolean)
 
 
 Base.metadata.create_all(engine)

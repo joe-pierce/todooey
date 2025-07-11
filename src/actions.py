@@ -9,6 +9,7 @@ def add_task(name, details, category, priority) -> None:
             category=category,
             priority=priority,
             is_complete=False,
+            archived=False
         )
         session.add(task)
 
@@ -17,7 +18,7 @@ def delete_task(task_id) -> None:
     with session_scope() as session:
         task = session.get(Task, task_id)
         if task:
-            session.delete(task)
+            task.archived = True
 
 
 def mark_task_complete(task_id) -> None:
@@ -42,3 +43,7 @@ def edit_task(task_id, name, details, category, priority) -> None:
             task.details = details
             task.category = category
             task.priority = priority
+
+def get_unique_categories():
+    with session_scope() as session:
+        return [row[0] for row in session.query(Task.category).filter_by(archived=False).distinct().all()]
