@@ -1,5 +1,6 @@
 from nicegui import ui
 
+from src.model import Task, session_scope
 from src.actions import (
     add_task,
     delete_task,
@@ -8,13 +9,13 @@ from src.actions import (
     mark_task_incomplete,
     get_unique_categories,
 )
-from src.model import Task, session_scope
 
 # Title
 ui.label("📝 Todooey").classes("text-2xl font-bold")
 selected_row = {"id": None}
 details_column_visible = {"state": True}
-all_categories = {}
+all_active_categories = {}
+all_categories = get_unique_categories(active_only=False)
 
 
 def update_task_list() -> None:
@@ -28,6 +29,8 @@ def update_task_list() -> None:
                     "details": task.details,
                     "category": task.category,
                     "priority": task.priority,
+                    "effort": task.effort,
+                    "complete_by": task.complete_by,
                     "is_complete": "✅" if task.is_complete else "⬜",
                 },
             )
@@ -40,8 +43,8 @@ def refresh_task_list() -> None:
     """Refresh the task table with current tasks from the database."""
     new_data = []
     with session_scope() as session:
-        for i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.priority).all()):
-            if all_categories.get(task.category, True):
+        for i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.complete_by, Task.priority, Task.effort).all()):
+            if all_active_categories.get(task.category, True):
                 new_data.append(
                     {
                         "id": task.id,
@@ -49,6 +52,8 @@ def refresh_task_list() -> None:
                         "details": task.details,
                         "category": task.category,
                         "priority": task.priority,
+                        "effort": task.effort,
+                        "complete_by": task.complete_by,
                         "is_complete": "✅" if task.is_complete else "⬜",
                     },
                 )
@@ -68,16 +73,19 @@ def refresh_task_list() -> None:
 
 
 def update_all_categories():
-    latest = get_unique_categories()
-    for key in all_categories.copy():
+    latest = get_unique_categories(active_only=True)
+    for key in all_active_categories.copy():
         if key not in latest:
-            del all_categories[key]
+            del all_active_categories[key]
 
     for cat in latest:
-        if cat not in all_categories:
-            all_categories[cat] = True
+        if cat not in all_active_categories:
+            all_active_categories[cat] = True
 
     refresh_category_buttons()
+    all_categories[:] = get_unique_categories(active_only=False)
+    add_category.set_autocomplete(all_categories)
+    edit_category.set_autocomplete(all_categories)
 
 
 def handle_row_select(e) -> None:
@@ -124,12 +132,12 @@ class HideCategoryButton(ui.button):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.label = args[0]
-        self.data_visible = all_categories[self.label]
+        self.data_visible = all_active_categories[self.label]
         self.on("click", self.toggle)
 
     def toggle(self) -> None:
         self.data_visible = not self.data_visible
-        all_categories[self.label] = self.data_visible
+        all_active_categories[self.label] = self.data_visible
         self.update()
         refresh_task_list()
 
@@ -169,6 +177,16 @@ task_table = (
                     "field": "priority",
                     "width": 50,
                     "sortable": True,
+                },
+                {
+                    "headerName": "Effort",
+                    "field": "effort",
+                    "width": 50,
+                },
+                {
+                    "headerName": "Complete by",
+                    "field": "complete_by",
+                    "width": 100,
                 },
                 {
                     "headerName": "Completed",
@@ -248,7 +266,9 @@ with ui.row().classes("gap-2"):
             edit_name.value = task.name
             edit_details.value = task.details
             edit_category.value = task.category
-            edit_priority.value = str(task.priority)
+            edit_priority.value = int(task.priority)
+            edit_effort.value = int(task.effort)
+            edit_complete_by.value = task.completed_by
             edit_dialog.open()
 
     def do_clear() -> None:
@@ -274,27 +294,52 @@ with ui.row().classes("gap-2"):
     ToggleDetailsButton().props("color=brown")
 
 
+def validate_int(value):
+    try:
+        int(value)
+        return True
+    except: 
+        return False
+    
+
 # Add dialog
 with ui.dialog() as add_dialog, ui.card().style("width: 700px"):
     ui.label("Add Task")
-
+    
+        
     add_name = ui.input("Name").props("outlined").classes("w-full")
     add_details = ui.textarea("Details").props("outlined").classes("w-full")
-    add_category = ui.input("Category").props("outlined").classes("w-full")
-    add_priority = ui.input("Priority").props("outlined type=number").classes("w-full")
+    add_category = ui.input("Category", autocomplete=all_categories).props("outlined").classes("w-full")
+    add_priority = ui.input("Priority", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
+    add_effort = ui.input("Effort", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
+    add_complete_by = ui.date("Complete by").props("outlined").classes("w-full")
 
     def handle_add() -> None:
-        add_task(
+        try:
+            add_task(
             add_name.value,
             add_details.value,
             add_category.value,
             int(add_priority.value),
-        )
-        refresh_task_list()
-        ui.notify("Task added ✅")
-        add_dialog.close()
+            int(add_effort.value),
+            add_complete_by.value
+            )
+            refresh_task_list()
+            ui.notify("Task added ✅")
+        except:
+            ui.notify("Failed to add task ❌")
+        else:
+            add_dialog.close()
+            add_name.set_value(None)
+            add_details.set_value(None)
+            add_category.set_value(None)
+            add_priority.set_value(None)
+            add_effort.set_value(None)
+            add_complete_by.set_value(None)
 
-    ui.button("Add Task", on_click=handle_add).classes("bg-primary text-white")
+            
+
+    ui.button("Add Task", on_click=handle_add).bind_enabled_from(add_priority, "value").classes("bg-primary text-white")
 
 # Edit Dialog
 with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
@@ -302,21 +347,30 @@ with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
 
     edit_name = ui.input("Name").props("outlined").classes("w-full")
     edit_details = ui.textarea("Details").props("outlined").classes("w-full")
-    edit_category = ui.input("Category").props("outlined").classes("w-full")
-    edit_priority = ui.input("Priority").props("outlined type=number").classes("w-full")
+    edit_category = ui.input("Category", autocomplete=all_categories).props("outlined").classes("w-full")
+    edit_priority = ui.input("Priority", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
+    edit_effort = ui.input("Effort", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
+    edit_complete_by = ui.date("Complete by").props("outlined").classes("w-full")
 
     def submit_edit() -> None:
         if selected_row["id"]:
-            edit_task(
-                selected_row["id"],
-                edit_name.value,
-                edit_details.value,
-                edit_category.value,
-                int(edit_priority.value),
-            )
-            refresh_task_list()
-            edit_dialog.close()
-            ui.notify("Task updated")
+            try:
+                edit_task(
+                    selected_row["id"],
+                    edit_name.value,
+                    edit_details.value,
+                    edit_category.value,
+                    int(edit_priority.value),
+                    int(edit_effort.value),
+                    edit_complete_by.value
+                )
+                refresh_task_list()
+                ui.notify("Task updated ✅")
+            except:
+                ui.notify("Failed to edit task ❌")
+                
+            else:
+                edit_dialog.close()
 
     ui.button("Save Changes", on_click=submit_edit).classes(
         "mt-2 bg-primary text-white",
@@ -326,7 +380,7 @@ with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
 def refresh_category_buttons():
     category_row.clear()
     with category_row:
-        for category in all_categories:
+        for category in all_active_categories:
             HideCategoryButton(category)
 
 

@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, Integer, String, create_engine, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -51,6 +51,10 @@ class Task(Base):
     priority = Column(Integer)
     is_complete = Column(Boolean)
     archived = Column(Boolean)
+    complete_by = Column(DateTime)
+    effort = Column(Integer)
+
+
 
 
 Base.metadata.create_all(engine)

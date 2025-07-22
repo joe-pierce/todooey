@@ -5,6 +5,7 @@ description = "Simple todo app"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.16.4",
     "mypy>=1.16.1",
     "nicegui>=2.21.0",
     "pytest>=8.4.1",
