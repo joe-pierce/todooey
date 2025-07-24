@@ -1,4 +1,6 @@
 from nicegui import ui
+from datetime import datetime
+from sqlalchemy import nulls_last
 
 from src.model import Task, session_scope
 from src.actions import (
@@ -10,6 +12,8 @@ from src.actions import (
     get_unique_categories,
 )
 
+ui.add_body_html('<style>.ag-row-hover .ag-cell  { background-color: inherit}</style>')
+
 # Title
 ui.label("📝 Todooey").classes("text-2xl font-bold")
 selected_row = {"id": None}
@@ -17,11 +21,22 @@ details_column_visible = {"state": True}
 all_active_categories = {}
 all_categories = get_unique_categories(active_only=False)
 
+with ui.row().classes("items-center gap-4 q-mt-md q-mb-sm"):
+    def colored_box(label, color):
+        with ui.row().classes("items-center gap-2"):
+            ui.element("div").style(f"width: 16px; height: 16px; background-color: {color}; border-radius: 3px;")
+            ui.label(label).classes("text-sm")
+
+    colored_box("Overdue", "#d96550")
+    colored_box("Today", "#f2aa4b")
+    colored_box("This week", "#f7ecb5")
+    colored_box("The rest", "#eae9e9")  # grey or white for everything else
+
 
 def update_task_list() -> None:
     new_data = []
     with session_scope() as session:
-        for _i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.priority).all()):
+        for _i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, nulls_last(Task.complete_by), Task.priority, Task.effort).all()):
             new_data.append(
                 {
                     "id": task.id,
@@ -30,7 +45,7 @@ def update_task_list() -> None:
                     "category": task.category,
                     "priority": task.priority,
                     "effort": task.effort,
-                    "complete_by": task.complete_by,
+                    "complete_by": task.complete_by.strftime('%d-%m-%Y') if task.complete_by else None,
                     "is_complete": "✅" if task.is_complete else "⬜",
                 },
             )
@@ -43,7 +58,7 @@ def refresh_task_list() -> None:
     """Refresh the task table with current tasks from the database."""
     new_data = []
     with session_scope() as session:
-        for i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, Task.complete_by, Task.priority, Task.effort).all()):
+        for i, task in enumerate(session.query(Task).filter_by(archived=False).order_by(Task.is_complete, nulls_last(Task.complete_by), Task.priority, Task.effort).all()):
             if all_active_categories.get(task.category, True):
                 new_data.append(
                     {
@@ -53,7 +68,7 @@ def refresh_task_list() -> None:
                         "category": task.category,
                         "priority": task.priority,
                         "effort": task.effort,
-                        "complete_by": task.complete_by,
+                        "complete_by": task.complete_by.strftime('%d-%m-%Y') if task.complete_by else None,
                         "is_complete": "✅" if task.is_complete else "⬜",
                     },
                 )
@@ -186,7 +201,8 @@ task_table = (
                 {
                     "headerName": "Complete by",
                     "field": "complete_by",
-                    "width": 100,
+                    "width": 100
+                    
                 },
                 {
                     "headerName": "Completed",
@@ -197,12 +213,47 @@ task_table = (
             ],
             "rowData": [],
             "rowSelection": "single",
+            ":getRowStyle": """
+                    function(params) {
+                        const completeBy = params.data.complete_by;
+                        const isComplete = params.data.is_complete === "✅";
+                        if (!completeBy || isComplete) return null;
+                        
+                        const today = new Date();
+                        const [day, month, year] = completeBy.split("-").map(Number);
+                        const dueDate = new Date(year, month - 1, day);
+
+                        // Remove time from today
+                        today.setHours(0, 0, 0, 0);
+                        dueDate.setHours(0, 0, 0, 0);
+
+                        // Start of the week (Monday)
+                        const startOfWeek = new Date(today);
+                        startOfWeek.setDate(today.getDate() - today.getDay() + 1);
+
+                        // End of the week (Sunday)
+                        const endOfWeek = new Date(startOfWeek);
+                        endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+                        if (dueDate < today) {
+                            return { backgroundColor: '#d96550' }; //
+                        } else if (dueDate.getTime() === today.getTime()) {
+                            return { backgroundColor: '#f2aa4b' }; //
+                        } else if (dueDate > today && dueDate <= endOfWeek) {
+                            return { backgroundColor: '#f7ecb5' }; //
+                        }
+                        return null;
+                    }
+                """
+            
+            
         },
     )
     .style("height: 450px")
     .on("cellDoubleClicked", double_click_toggle_completed)
     .on("cellClicked", handle_row_select)
 )
+
 
 # task_table.add_slot('header', r'''
 #     <q-tr :props="props">
@@ -268,7 +319,7 @@ with ui.row().classes("gap-2"):
             edit_category.value = task.category
             edit_priority.value = int(task.priority)
             edit_effort.value = int(task.effort)
-            edit_complete_by.value = task.completed_by
+            edit_complete_by.value = task.complete_by.strftime('%Y-%m-%d') if task.complete_by else None
             edit_dialog.open()
 
     def do_clear() -> None:
@@ -312,7 +363,7 @@ with ui.dialog() as add_dialog, ui.card().style("width: 700px"):
     add_category = ui.input("Category", autocomplete=all_categories).props("outlined").classes("w-full")
     add_priority = ui.input("Priority", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
     add_effort = ui.input("Effort", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
-    add_complete_by = ui.date("Complete by").props("outlined").classes("w-full")
+    add_complete_by = ui.date("Complete by").props("outlined").classes("w-40 text-sm p-1")
 
     def handle_add() -> None:
         try:
@@ -322,11 +373,12 @@ with ui.dialog() as add_dialog, ui.card().style("width: 700px"):
             add_category.value,
             int(add_priority.value),
             int(add_effort.value),
-            add_complete_by.value
+            datetime.strptime(add_complete_by.value, '%Y-%m-%d')
             )
             refresh_task_list()
             ui.notify("Task added ✅")
-        except:
+        except Exception as e:
+            print(e)
             ui.notify("Failed to add task ❌")
         else:
             add_dialog.close()
@@ -350,7 +402,7 @@ with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
     edit_category = ui.input("Category", autocomplete=all_categories).props("outlined").classes("w-full")
     edit_priority = ui.input("Priority", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
     edit_effort = ui.input("Effort", validation={'Must be an int': validate_int}).props("outlined type=number").classes("w-full")
-    edit_complete_by = ui.date("Complete by").props("outlined").classes("w-full")
+    edit_complete_by = ui.date("Complete by").props("outlined").classes("w-50")
 
     def submit_edit() -> None:
         if selected_row["id"]:
@@ -362,11 +414,12 @@ with ui.dialog() as edit_dialog, ui.card().style("width: 700px"):
                     edit_category.value,
                     int(edit_priority.value),
                     int(edit_effort.value),
-                    edit_complete_by.value
+                    datetime.strptime(edit_complete_by.value, '%Y-%m-%d') if edit_complete_by.value else None
                 )
                 refresh_task_list()
                 ui.notify("Task updated ✅")
-            except:
+            except Exception as e:
+                print(e)
                 ui.notify("Failed to edit task ❌")
                 
             else:
@@ -389,6 +442,7 @@ category_row = ui.row().classes("gap-2")
 
 # Initial load of tasks
 update_task_list()
+
 
 
 ui.run()
